@@ -5,14 +5,14 @@ admin:
   host: ${RAGFLOW_HOST:-0.0.0.0}
   http_port: 9381
 mysql:
-  name: '${MYSQL_DBNAME:-rag_flow}'
-  user: '${MYSQL_USER:-root}'
-  password: '${MYSQL_PASSWORD:-infini_rag_flow}'
-  host: '${MYSQL_HOST:-mysql}'
-  port: ${MYSQL_PORT:-3306}
-  max_connections: 900
-  stale_timeout: 300
-  max_allowed_packet: ${MYSQL_MAX_PACKET:-1073741824}
+   name: '${MYSQL_DBNAME:-rag_flow}'
+   user: '${MYSQL_USER:-root}'
+   password: '${MYSQL_PASSWORD:-infini_rag_flow}'
+   host: '${MYSQL_HOST:-mysql}'
+   port: ${MYSQL_PORT:-3306}
+   max_connections: 900
+   stale_timeout: 300
+   max_allowed_packet: ${MYSQL_MAX_PACKET:-1073741824}
 minio:
   user: '${MINIO_USER:-rag_flow}'
   password: '${MINIO_PASSWORD:-infini_rag_flow}'
@@ -58,9 +58,19 @@ redis:
   host: '${REDIS_HOST:-redis}:6379'
 user_default_llm:
   default_models:
+    chat_model:
+      name: 'gemini-2.5-flash'
+      factory: 'Gemini'
+      api_key: '${GEMINI_API_KEY:-api_key}'
+      base_url: ''
     embedding_model:
-      api_key: 'xxx'
-      base_url: 'http://${TEI_HOST}:80'
+      name: 'gemini-embedding-001'
+      factory: 'Gemini'
+      api_key: '${GEMINI_API_KEY:-api_key}'
+      base_url: ''
+    rerank_model: ''
+    asr_model: ''
+    image2text_model: ''
 # postgres:
 #   name: '${POSTGRES_DBNAME:-rag_flow}'
 #   user: '${POSTGRES_USER:-rag_flow}'
@@ -144,12 +154,12 @@ user_default_llm:
 #     client_secret: "your_client_secret"
 #     redirect_uri: "https://your-app.com/v1/user/oauth/callback/github"
 # authentication:
-#  client:
-#    switch: false
-#    http_app_key:
-#    http_secret_key:
-#  site:
-#    switch: false
+#   client:
+#     switch: false
+#     http_app_key:
+#     http_secret_key:
+#   site:
+#     switch: false
 #  disable_password_login: false
 # permission:
 #   switch: false
