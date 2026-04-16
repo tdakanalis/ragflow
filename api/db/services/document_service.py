@@ -888,7 +888,7 @@ class DocumentService(CommonService):
                     cls.update_by_id(d["id"], {"process_begin_at": begin_at})
 
                 info = {"process_duration": max(datetime.timestamp(datetime.now()) - begin_at.timestamp(), 0), "run": status}
-                if prg != 0 and not freeze_progress:
+                if (prg != 0 or doc_progress < 0) and not freeze_progress:
                     info["progress"] = prg
                 if msg:
                     info["progress_msg"] = msg

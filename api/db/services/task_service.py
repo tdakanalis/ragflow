@@ -338,8 +338,7 @@ class TaskService(CommonService):
                     prog = info["progress"]
                     cls.model.update(progress=prog).where(
                         (cls.model.id == id) &
-                        ((prog >= 1) | ((cls.model.progress != -1) &
-                        ((prog == -1) | (prog > cls.model.progress))))
+                        ((prog >= 1) | (prog == -1) | (prog > cls.model.progress))
                     ).execute()
 
         process_duration = (datetime.now() - task.begin_at).total_seconds()
