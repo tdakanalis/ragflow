@@ -14,6 +14,7 @@ function usage() {
     echo "  --disable-webserver             Disables the web server (nginx + ragflow_server)."
     echo "  --disable-taskexecutor          Disables task executor workers."
     echo "  --disable-datasync              Disables synchronization of datasource workers."
+    echo "  --disable-progresssync          Disables document progress sync."
     echo "  --enable-mcpserver              Enables the MCP server."
     echo "  --enable-adminserver            Enables the Admin server."
     echo "  --init-superuser                Initializes the superuser."
@@ -35,12 +36,13 @@ function usage() {
 ENABLE_WEBSERVER=1 # Default to enable web server
 ENABLE_TASKEXECUTOR=1  # Default to enable task executor
 ENABLE_DATASYNC=1
+ENABLE_PROGRESSSYNC=1
 ENABLE_MCP_SERVER=0
 ENABLE_ADMIN_SERVER=0 # Default close admin server
 INIT_SUPERUSER_ARGS="" # Default to not initialize superuser
 CONSUMER_NO_BEG=0
 CONSUMER_NO_END=0
-WORKERS=1
+WORKERS=4
 
 MCP_HOST="127.0.0.1"
 MCP_PORT=9382
@@ -79,6 +81,10 @@ for arg in "$@"; do
       ;;
     --disable-datasync)
       ENABLE_DATASYNC=0
+      shift
+      ;;
+    --disable-progresssync)
+      ENABLE_PROGRESSSYNC=0
       shift
       ;;
     --enable-mcpserver)
@@ -260,6 +266,14 @@ function wait_for_server() {
     echo "$server_name is ready."
 }
 
+function progress_sync_exe() {
+    while true; do
+        "$PY" progress_sync.py &
+        wait;
+        sleep 1;
+    done
+}
+
 # -----------------------------------------------------------------------------
 # Start components based on flags
 # -----------------------------------------------------------------------------
@@ -270,12 +284,32 @@ if [[ "${ENABLE_WEBSERVER}" -eq 1 ]]; then
     echo "Starting nginx..."
     /usr/sbin/nginx
 
+    echo "Ensuring Gunicorn and Uvicorn are installed for production serving..."
+    # Quickly checks if gunicorn is installed; if not, uses uv to install it in < 2 seconds
+    "$PY" -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('gunicorn') else 1)" \
+      || uv pip install --no-cache-dir gunicorn uvicorn
+
+    # 1. Run the script once directly to trigger the __main__ block's DB initialization.
+    # We use --version just to make it exit immediately after the init logic runs.
+    #echo "Running database migrations and initialization..."
+   # python3 api/ragflow_server.py --version
+
+    echo "Starting ragflow_server via Production ASGI..."
     while true; do
-        echo "Attempt to start RAGFlow server..."
-        "$PY" api/ragflow_server.py ${INIT_SUPERUSER_ARGS}
-        echo "RAGFlow python server started."
+        # Use Gunicorn with Uvicorn asynchronous workers for production concurrency
+        gunicorn api.ragflow_server:app \
+          -k uvicorn.workers.UvicornWorker \
+          -w 4 \
+          --timeout 120 \
+          -b 0.0.0.0:9380 &
+        wait;
         sleep 1;
     done &
+
+    if [[ "${ENABLE_PROGRESSSYNC}" -eq 1 ]]; then
+        echo "Starting document progress sync..."
+        progress_sync_exe &
+    fi
 
     if [[ "${API_PROXY_SCHEME}" == "hybrid" ]]; then
         while true; do
