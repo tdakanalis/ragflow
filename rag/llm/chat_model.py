@@ -1103,6 +1103,13 @@ class GoogleChat(Base):
 
             yield total_tokens
 
+    async def async_chat(self, system, history, gen_conf={}, **kwargs):
+        import asyncio
+
+        if system and history and history[0].get("role") != "system":
+            history.insert(0, {"role": "system", "content": system})
+        return await asyncio.to_thread(self._chat, history, dict(gen_conf), **kwargs)
+
     async def async_chat_streamly(self, system, history, gen_conf: dict = {}, **kwargs):
         import asyncio
 
