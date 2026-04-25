@@ -37,7 +37,7 @@ const GoogleModal = ({
       label: t('modelType'),
       type: FormFieldType.Select,
       required: true,
-      options: buildModelTypeOptions(['chat', 'image2text']),
+      options: buildModelTypeOptions(['chat', 'image2text', 'embedding']),
       defaultValue: 'chat',
       validation: {
         message: t('modelTypeMessage'),

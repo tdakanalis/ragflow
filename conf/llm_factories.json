@@ -4566,7 +4566,7 @@
         {
             "name": "Google Cloud",
             "logo": "",
-            "tags": "LLM",
+            "tags": "LLM,TEXT EMBEDDING",
             "status": "1",
             "llm": []
         },

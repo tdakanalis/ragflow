@@ -622,6 +622,89 @@ class GeminiEmbed(Base):
             raise Exception(f"Error: {result}")
 
 
+class GoogleEmbed(Base):
+    _FACTORY_NAME = "Google Cloud"
+
+    def __init__(self, key, model_name, **kwargs):
+        from google import genai
+        from google.genai import types
+        from google.oauth2 import service_account
+
+        key = json.loads(key)
+        access_token = json.loads(base64.b64decode(key.get("google_service_account_key", "")))
+        project_id = key.get("google_project_id", "")
+        region = key.get("google_region", "")
+        scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+
+        self.model_name = model_name[7:] if model_name.startswith("models/") else model_name
+        self.types = types
+
+        if access_token:
+            credits = service_account.Credentials.from_service_account_info(access_token, scopes=scopes)
+            self.client = genai.Client(vertexai=True, project=project_id, location=region, credentials=credits)
+        else:
+            self.client = genai.Client(vertexai=True, project=project_id, location=region)
+
+    def _build_embedding_config(self, task_type_name="RETRIEVAL_DOCUMENT"):
+        task_type = task_type_name
+        if hasattr(self.types, "TaskType"):
+            task_type = getattr(self.types.TaskType, task_type_name, task_type_name)
+        try:
+            return self.types.EmbedContentConfig(task_type=task_type)
+        except TypeError:
+            return None
+
+    @staticmethod
+    def _parse_embeddings(response):
+        embeddings = getattr(response, "embeddings", None)
+        if embeddings is None and isinstance(response, dict):
+            embeddings = response.get("embeddings")
+        result = []
+        for emb in embeddings or []:
+            values = getattr(emb, "values", None)
+            if values is None and isinstance(emb, dict):
+                values = emb.get("values") or emb.get("embedding")
+            if values is None:
+                raise TypeError(f"Unsupported embedding payload: {type(emb)}")
+            result.append(values)
+        return result
+
+    @retry
+    def encode(self, texts: list):
+        texts = [truncate(t, 2048) for t in texts]
+        token_count = sum(num_tokens_from_string(t) for t in texts)
+        config = self._build_embedding_config("RETRIEVAL_DOCUMENT")
+        batch_size = 16
+        ress = []
+        for i in range(0, len(texts), batch_size):
+            result = None
+            try:
+                kwargs = {"model": self.model_name, "contents": texts[i : i + batch_size]}
+                if config is not None:
+                    kwargs["config"] = config
+                result = self.client.models.embed_content(**kwargs)
+                ress.extend(self._parse_embeddings(result))
+            except Exception as _e:
+                log_exception(_e, result)
+                raise Exception(f"Error: {result}")
+        return np.array(ress), token_count
+
+    @retry
+    def encode_queries(self, text):
+        config = self._build_embedding_config("RETRIEVAL_QUERY")
+        token_count = num_tokens_from_string(text)
+        result = None
+        try:
+            kwargs = {"model": self.model_name, "contents": [truncate(text, 2048)]}
+            if config is not None:
+                kwargs["config"] = config
+            result = self.client.models.embed_content(**kwargs)
+            return np.array(self._parse_embeddings(result)[0]), token_count
+        except Exception as _e:
+            log_exception(_e, result)
+            raise Exception(f"Error: {result}")
+
+
 class NvidiaEmbed(Base):
     _FACTORY_NAME = "NVIDIA"
 
