@@ -1089,8 +1089,10 @@ class GoogleChat(Base):
                     contents=contents,
                     config=config,
                 ):
-                    text = chunk.text
-                    ans = text
+                    text = getattr(chunk, "text", None)
+                    if not text:
+                        continue
+                    ans += text
                     total_tokens += num_tokens_from_string(text)
                     yield ans
 
@@ -1098,6 +1100,27 @@ class GoogleChat(Base):
                 yield f"{ans}\n{ERROR_PREFIX}: {e}"
 
             yield total_tokens
+
+    async def async_chat_streamly(self, system, history, gen_conf: dict = {}, **kwargs):
+        import asyncio
+
+        if system and history and history[0].get("role") != "system":
+            history.insert(0, {"role": "system", "content": system})
+
+        gen = self.chat_streamly(system, history, dict(gen_conf), **kwargs)
+        sentinel = object()
+
+        def next_item():
+            try:
+                return next(gen)
+            except StopIteration:
+                return sentinel
+
+        while True:
+            item = await asyncio.to_thread(next_item)
+            if item is sentinel:
+                return
+            yield item
 
 
 class TokenPonyChat(Base):

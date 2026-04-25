@@ -95,20 +95,23 @@ async def set_api_key():
             mdl = ChatModel[factory](req["api_key"], llm.llm_name, base_url=base_url, **extra)
             try:
                 async def check_streamly():
+                    last_error = None
                     async for chunk in mdl.async_chat_streamly(
                         None,
                         [{"role": "user", "content": "Hi"}],
                         {"temperature": 0.9},
                     ):
-                        if chunk and isinstance(chunk, str) and chunk.find("**ERROR**") < 0:
-                            return True
-                    return False
+                        if chunk and isinstance(chunk, str):
+                            if chunk.find("**ERROR**") < 0:
+                                return True, None
+                            last_error = chunk
+                    return False, last_error
 
-                result = await asyncio.wait_for(check_streamly(), timeout=timeout_seconds)
+                result, last_error = await asyncio.wait_for(check_streamly(), timeout=timeout_seconds)
                 if result:
                     chat_passed = True
                 else:
-                    raise Exception("No valid response received")
+                    raise Exception(last_error or "No valid response received")
             except Exception as e:
                 msg += f"\nFail to access model({llm.fid}/{llm.llm_name}) using this api key." + str(e)
         elif not rerank_passed and llm.model_type == LLMType.RERANK.value:
