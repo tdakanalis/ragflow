@@ -257,7 +257,10 @@ async def add_llm():
                 if len(arr[0]) == 0:
                     raise Exception("Fail")
             except Exception as e:
-                msg += f"\nFail to access embedding model({mdl_nm})." + str(e)
+                detail = str(e) or repr(e)
+                if isinstance(e, asyncio.TimeoutError):
+                    detail = f"Timed out after {timeout_seconds}s. Set LLM_TIMEOUT_SECONDS higher and retry."
+                msg += f"\nFail to access embedding model({mdl_nm}). {detail}"
         case LLMType.CHAT.value:
             assert factory in ChatModel, f"Chat model from {factory} is not supported yet."
             mdl = ChatModel[factory](
