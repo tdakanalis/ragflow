@@ -639,7 +639,12 @@ class GoogleEmbed(Base):
         self.model_name = model_name[7:] if model_name.startswith("models/") else model_name
         self.types = types
         self.max_length = 2048
-        self._max_per_request = 1 if self.model_name.startswith("gemini-embedding") else 250
+        default_batch = 16 if self.model_name.startswith("gemini-embedding") else 250
+        try:
+            override = int(os.environ.get("GOOGLE_EMBED_BATCH_SIZE", "") or 0)
+        except ValueError:
+            override = 0
+        self._max_per_request = override if override > 0 else default_batch
 
         if access_token:
             credits = service_account.Credentials.from_service_account_info(access_token, scopes=scopes)
