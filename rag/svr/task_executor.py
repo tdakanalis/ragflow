@@ -150,7 +150,7 @@ def set_progress(task_id, from_page=0, to_page=-1, prog=None, msg="Processing...
             msg += " [Canceled]"
             prog = -1
 
-        if to_page > 0:
+        if to_page > 0 and to_page < 100000000:
             if msg:
                 if from_page < to_page:
                     msg = f"Page({from_page + 1}~{to_page + 1}): " + msg
