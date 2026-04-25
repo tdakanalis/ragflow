@@ -1075,6 +1075,8 @@ class GoogleChat(Base):
             # Convert history to google-genai Content format
             contents = []
             for item in history:
+                if item["role"] == "system":
+                    continue
                 # google-genai uses 'model' instead of 'assistant'
                 role = "model" if item["role"] == "assistant" else item["role"]
                 content = Content(
