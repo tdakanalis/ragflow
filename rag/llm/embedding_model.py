@@ -638,6 +638,8 @@ class GoogleEmbed(Base):
 
         self.model_name = model_name[7:] if model_name.startswith("models/") else model_name
         self.types = types
+        self.max_length = 2048
+        self._max_per_request = 1 if self.model_name.startswith("gemini-embedding") else 250
 
         if access_token:
             credits = service_account.Credentials.from_service_account_info(access_token, scopes=scopes)
@@ -674,19 +676,26 @@ class GoogleEmbed(Base):
         texts = [truncate(t, 2048) for t in texts]
         token_count = sum(num_tokens_from_string(t) for t in texts)
         config = self._build_embedding_config("RETRIEVAL_DOCUMENT")
-        batch_size = 16
+        batch_size = self._max_per_request
         ress = []
         for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
             result = None
             try:
-                kwargs = {"model": self.model_name, "contents": texts[i : i + batch_size]}
+                kwargs = {"model": self.model_name, "contents": batch}
                 if config is not None:
                     kwargs["config"] = config
                 result = self.client.models.embed_content(**kwargs)
-                ress.extend(self._parse_embeddings(result))
+                parsed = self._parse_embeddings(result)
+                if len(parsed) != len(batch):
+                    raise Exception(
+                        f"Vertex AI returned {len(parsed)} embedding(s) for {len(batch)} input(s); "
+                        f"model={self.model_name}. Try a smaller EMBEDDING_BATCH_SIZE or a different model."
+                    )
+                ress.extend(parsed)
             except Exception as _e:
                 log_exception(_e, result)
-                raise Exception(f"Error: {result}")
+                raise Exception(f"Vertex AI embed_content failed: {_e}") from _e
         return np.array(ress), token_count
 
     @retry
@@ -702,7 +711,7 @@ class GoogleEmbed(Base):
             return np.array(self._parse_embeddings(result)[0]), token_count
         except Exception as _e:
             log_exception(_e, result)
-            raise Exception(f"Error: {result}")
+            raise Exception(f"Vertex AI embed_content failed: {_e}") from _e
 
 
 class NvidiaEmbed(Base):
