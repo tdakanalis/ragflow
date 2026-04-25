@@ -31,13 +31,16 @@ Public API:
 
 Environment variables:
     - LLM_MAX_RETRIES: Maximum retry attempts (default: 5)
-    - LLM_BASE_DELAY: Base delay in seconds for backoff (default: 2.0)
+    - LLM_BASE_DELAY: Base delay in seconds for exponential backoff (default: 1.0).
+      Retry N waits ``base_delay * 2**N + uniform(0, base_delay)`` seconds,
+      capped at 60 s.
 """
 
 from __future__ import annotations
 
 import asyncio
 import functools
+import inspect
 import logging
 import os
 import random
@@ -48,8 +51,17 @@ from typing import TypeVar
 
 ERROR_PREFIX = "**ERROR**"
 
-_MIN_JITTER_MULTIPLIER = 10
-_MAX_JITTER_MULTIPLIER = 150
+
+def is_error_result(result: object) -> bool:
+    """Return True if *result* is a string carrying the LLM error marker.
+
+    Producers encode failures as strings containing ``ERROR_PREFIX`` (either
+    as a leading marker or appended after partial streamed output). Callers
+    use this helper instead of ad-hoc substring checks.
+    """
+    return isinstance(result, str) and ERROR_PREFIX in result
+
+_MAX_DELAY_SECONDS = 60.0
 
 _T = TypeVar("_T")
 
@@ -88,6 +100,14 @@ _RETRYABLE_SERVER_SIGNALS: frozenset[str] = frozenset(
         "unavailable",
     }
 )
+_RETRYABLE_CONNECTION_SIGNALS: frozenset[str] = frozenset(
+    {
+        "connect",
+        "network",
+        "unreachable",
+        "dns",
+    }
+)
 
 _ERROR_CLASSIFICATION: tuple[tuple[frozenset[str], LLMErrorCode], ...] = (
     (frozenset({"quota", "capacity", "credit", "billing", "balance", "欠费"}), LLMErrorCode.ERROR_QUOTA),
@@ -106,7 +126,8 @@ _ERROR_CLASSIFICATION: tuple[tuple[frozenset[str], LLMErrorCode], ...] = (
 def is_retryable(error: Exception) -> bool:
     """Determine if an exception represents a transient error worth retrying.
 
-    Retries on rate-limit errors (429, TPM limits) and server errors (5xx).
+    Retries on rate-limit errors (429, TPM limits), server errors (5xx),
+    and transient connection errors (network/DNS/unreachable).
     All other errors are considered non-retryable.
 
     Args:
@@ -116,7 +137,11 @@ def is_retryable(error: Exception) -> bool:
         True if the error is transient and should be retried.
     """
     msg = str(error).lower()
-    return any(signal in msg for signal in _RETRYABLE_RATE_LIMIT_SIGNALS) or any(signal in msg for signal in _RETRYABLE_SERVER_SIGNALS)
+    return (
+        any(signal in msg for signal in _RETRYABLE_RATE_LIMIT_SIGNALS)
+        or any(signal in msg for signal in _RETRYABLE_SERVER_SIGNALS)
+        or any(signal in msg for signal in _RETRYABLE_CONNECTION_SIGNALS)
+    )
 
 
 def classify_error(error: Exception) -> LLMErrorCode:
@@ -138,19 +163,24 @@ def classify_error(error: Exception) -> LLMErrorCode:
     return LLMErrorCode.ERROR_GENERIC
 
 
-def get_retry_delay(base_delay: float) -> float:
-    """Calculate a randomized retry delay with exponential backoff jitter.
+def get_retry_delay(base_delay: float, attempt: int) -> float:
+    """Calculate the retry delay using exponential backoff with additive jitter.
 
-    Applies a random multiplier between 10x and 150x the base delay
-    to spread out retry attempts and avoid thundering herd.
+    The delay is ``base_delay * 2**attempt + uniform(0, base_delay)``, capped
+    at ``_MAX_DELAY_SECONDS``. This makes the first retry fast (roughly one
+    base delay) and later retries exponentially more patient, while a small
+    jitter spreads concurrent callers to avoid thundering herd.
 
     Args:
         base_delay: The base delay in seconds.
+        attempt: The current retry attempt number (0-indexed).
 
     Returns:
-        The delay in seconds with random jitter applied.
+        The delay in seconds, capped at ``_MAX_DELAY_SECONDS``.
     """
-    return base_delay * random.uniform(_MIN_JITTER_MULTIPLIER, _MAX_JITTER_MULTIPLIER)
+    expo = base_delay * (2 ** attempt)
+    jitter = random.uniform(0, base_delay)
+    return min(expo + jitter, _MAX_DELAY_SECONDS)
 
 
 def retry(method: Callable[..., _T]) -> Callable[..., _T]:
@@ -168,19 +198,30 @@ def retry(method: Callable[..., _T]) -> Callable[..., _T]:
 
     Returns:
         The wrapped method with retry behavior.
+
+    Limitations:
+        Generator functions are rejected at decoration time. Calling a
+        generator returns the generator object without raising, so the
+        try/except would never see iteration errors and the decorator
+        would silently be a no-op.
     """
+    if inspect.isgeneratorfunction(method):
+        raise TypeError(
+            "@retry does not support generator functions; "
+            "wrap the non-streaming call instead"
+        )
 
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
         max_retries = getattr(self, "max_retries", int(os.environ.get("LLM_MAX_RETRIES", 5)))
-        base_delay = getattr(self, "base_delay", float(os.environ.get("LLM_BASE_DELAY", 2.0)))
+        base_delay = getattr(self, "base_delay", float(os.environ.get("LLM_BASE_DELAY", 1.0)))
         for attempt in range(max_retries + 1):
             try:
                 return method(self, *args, **kwargs)
             except Exception as e:
                 if attempt == max_retries or not is_retryable(e):
                     raise
-                delay = get_retry_delay(base_delay)
+                delay = get_retry_delay(base_delay, attempt)
                 logging.warning(f"Retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries})")
                 time.sleep(delay)
 
@@ -199,20 +240,30 @@ def retry_or_fallback(error_result: Callable[[Exception], _T]) -> Callable[[Call
 
     Returns:
         A decorator that wraps the method with retry-or-fallback behavior.
+
+    Limitations:
+        Generator functions are rejected at decoration time for the same
+        reason as ``retry``: the try/except would never see iteration errors.
     """
 
     def decorator(method: Callable[..., _T]) -> Callable[..., _T]:
+        if inspect.isgeneratorfunction(method):
+            raise TypeError(
+                "@retry_or_fallback does not support generator functions; "
+                "wrap the non-streaming call instead"
+            )
+
         @functools.wraps(method)
         def wrapper(self, *args, **kwargs):
             max_retries = getattr(self, "max_retries", int(os.environ.get("LLM_MAX_RETRIES", 5)))
-            base_delay = getattr(self, "base_delay", float(os.environ.get("LLM_BASE_DELAY", 2.0)))
+            base_delay = getattr(self, "base_delay", float(os.environ.get("LLM_BASE_DELAY", 1.0)))
             for attempt in range(max_retries + 1):
                 try:
                     return method(self, *args, **kwargs)
                 except Exception as e:
                     if attempt == max_retries or not is_retryable(e):
                         return error_result(e)
-                    delay = get_retry_delay(base_delay)
+                    delay = get_retry_delay(base_delay, attempt)
                     logging.warning(f"Retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries})")
                     time.sleep(delay)
 
@@ -246,11 +297,15 @@ async def async_handle_exception(
     """
     logging.exception(f"{log_prefix} async completion")
     error_code = classify_error(error)
+
     if attempt == max_retries:
         error_code = LLMErrorCode.ERROR_MAX_RETRIES
+        msg = f"{ERROR_PREFIX}: {error_code} - {str(error)}"
+        logging.error(f"{log_prefix} giving up after {max_retries} retries: {msg}")
+        return msg
 
     if is_retryable(error):
-        delay = get_retry_delay(base_delay)
+        delay = get_retry_delay(base_delay, attempt)
         logging.warning(f"Error: {error_code}. Retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries})")
         await asyncio.sleep(delay)
         return None

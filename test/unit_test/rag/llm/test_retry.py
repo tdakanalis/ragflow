@@ -21,13 +21,18 @@ These tests verify the centralized retry mechanism for LLM API calls,
 including error classification, retryable error detection, and decorator behavior.
 """
 
+import asyncio
+from unittest.mock import patch
+
 import pytest
 
 from rag.llm.retry import (
     LLMErrorCode,
     ERROR_PREFIX,
+    async_handle_exception,
     classify_error,
     get_retry_delay,
+    is_error_result,
     is_retryable,
     retry,
     retry_or_fallback,
@@ -54,6 +59,12 @@ class TestIsRetryable:
             ("500 Internal Server Error", True),
             ("server error occurred", True),
             ("service unavailable", True),
+            # Connection errors - should retry
+            ("connection refused", True),
+            ("network unreachable", True),
+            ("host unreachable", True),
+            ("dns failure", True),
+            ("failed to connect to host", True),
             # Non-retryable errors - should NOT retry
             ("invalid request", False),
             ("authentication failed", False),
@@ -134,31 +145,32 @@ class TestClassifyError:
 class TestGetRetryDelay:
     """Tests for the get_retry_delay function."""
 
-    def test_delay_range(self):
-        """Test that delay is within expected range."""
-        base_delay = 2.0
-        min_expected = base_delay * 10
-        max_expected = base_delay * 150
+    def test_delay_range_per_attempt(self):
+        """Each attempt draws from [base * 2**attempt, base * 2**attempt + base], capped at 60s."""
+        base_delay = 1.0
+        for attempt in range(6):
+            expo = base_delay * (2 ** attempt)
+            lo, hi = min(expo, 60.0), min(expo + base_delay, 60.0)
+            for _ in range(50):
+                delay = get_retry_delay(base_delay, attempt)
+                assert lo <= delay <= hi, f"attempt={attempt} delay={delay} not in [{lo},{hi}]"
 
-        for _ in range(100):
-            delay = get_retry_delay(base_delay)
-            assert min_expected <= delay <= max_expected, f"Delay {delay} out of range"
+    def test_delay_is_capped(self):
+        """Very high attempts are capped at the max delay."""
+        for attempt in range(10, 20):
+            assert get_retry_delay(1.0, attempt) == 60.0
 
     def test_delay_variance(self):
-        """Test that delays vary between calls (random jitter)."""
-        delays = [get_retry_delay(2.0) for _ in range(10)]
-        unique_delays = set(delays)
-        # With 100 iterations, we should have significant variance
-        assert len(unique_delays) > 1, "Delays should have variance"
+        """Delays for the same attempt vary due to jitter."""
+        delays = {get_retry_delay(1.0, 2) for _ in range(20)}
+        assert len(delays) > 1, "Delays should have variance from jitter"
 
     def test_different_base_delays(self):
-        """Test that different base delays scale correctly."""
-        delay_1 = get_retry_delay(1.0)
-        delay_2 = get_retry_delay(5.0)
-
-        # Both should still be in their respective ranges
-        assert 10 <= delay_1 <= 150
-        assert 50 <= delay_2 <= 750
+        """Scaling the base delay scales the progression proportionally."""
+        # attempt 0 with base 1.0 -> [1, 2]; with base 5.0 -> [5, 10]
+        for _ in range(20):
+            assert 1.0 <= get_retry_delay(1.0, 0) <= 2.0
+            assert 5.0 <= get_retry_delay(5.0, 0) <= 10.0
 
 
 class TestRetryDecorator:
@@ -397,14 +409,61 @@ class TestAsyncHandleException:
         assert "invalid request" in msg
         assert "INVALID_REQUEST" in msg
 
-    def test_max_retries_logic(self):
-        """Test that max retries sets ERROR_MAX_RETRIES code."""
-        # This mirrors the logic in async_handle_exception for max retries
-        error = Exception("rate limit")
-        error_code = classify_error(error)
-        # When attempt == max_retries, the code should be set to ERROR_MAX_RETRIES
-        # This is tested by verifying the classify_error function
-        assert error_code == LLMErrorCode.ERROR_RATE_LIMIT
+    def test_retryable_mid_attempt_returns_none_and_sleeps(self):
+        """Retryable error before final attempt should sleep and return None."""
+
+        async def run():
+            with patch("rag.llm.retry.asyncio.sleep") as mock_sleep:
+                mock_sleep.return_value = None
+                result = await async_handle_exception(
+                    error=Exception("rate limit"),
+                    attempt=0,
+                    max_retries=3,
+                    base_delay=0.001,
+                )
+                return result, mock_sleep.await_count
+
+        result, sleep_calls = asyncio.run(run())
+        assert result is None
+        assert sleep_calls == 1
+
+    def test_non_retryable_returns_error_string_no_sleep(self):
+        """Non-retryable error should return an error string without sleeping."""
+
+        async def run():
+            with patch("rag.llm.retry.asyncio.sleep") as mock_sleep:
+                result = await async_handle_exception(
+                    error=Exception("invalid request"),
+                    attempt=0,
+                    max_retries=3,
+                    base_delay=0.001,
+                )
+                return result, mock_sleep.await_count
+
+        result, sleep_calls = asyncio.run(run())
+        assert isinstance(result, str)
+        assert ERROR_PREFIX in result
+        assert "INVALID_REQUEST" in result
+        assert sleep_calls == 0
+
+    def test_final_attempt_returns_max_retries_error_no_sleep(self):
+        """On the final attempt, even a retryable error must surrender with ERROR_MAX_RETRIES and not sleep."""
+
+        async def run():
+            with patch("rag.llm.retry.asyncio.sleep") as mock_sleep:
+                result = await async_handle_exception(
+                    error=Exception("rate limit"),
+                    attempt=3,
+                    max_retries=3,
+                    base_delay=0.001,
+                )
+                return result, mock_sleep.await_count
+
+        result, sleep_calls = asyncio.run(run())
+        assert isinstance(result, str)
+        assert ERROR_PREFIX in result
+        assert LLMErrorCode.ERROR_MAX_RETRIES.value in result
+        assert sleep_calls == 0
 
 
 class TestLLMErrorCode:
@@ -440,6 +499,57 @@ class TestErrorPrefix:
     def test_error_prefix_value(self):
         """Test that ERROR_PREFIX has correct value."""
         assert ERROR_PREFIX == "**ERROR**"
+
+
+class TestIsErrorResult:
+    """Tests for the is_error_result helper."""
+
+    def test_prefix_marker(self):
+        assert is_error_result("**ERROR**: something went wrong")
+
+    def test_appended_marker(self):
+        # Streamed chat paths yield "partial answer\n**ERROR**: ..."
+        assert is_error_result("partial answer\n**ERROR**: boom")
+
+    def test_clean_string(self):
+        assert not is_error_result("all good")
+
+    def test_empty_string(self):
+        assert not is_error_result("")
+
+    def test_non_string_inputs(self):
+        assert not is_error_result(None)
+        assert not is_error_result(42)
+        assert not is_error_result(("**ERROR**: tuple", 0))
+        assert not is_error_result(["**ERROR**"])
+
+
+class TestGeneratorGuard:
+    """@retry / @retry_or_fallback must reject generator functions at decoration time."""
+
+    def test_retry_rejects_generator(self):
+        with pytest.raises(TypeError, match="does not support generator"):
+            @retry
+            def gen(self):
+                yield 1
+
+    def test_retry_or_fallback_rejects_generator(self):
+        with pytest.raises(TypeError, match="does not support generator"):
+            @retry_or_fallback(lambda e: None)
+            def gen(self):
+                yield 1
+
+    def test_retry_accepts_regular_function(self):
+        @retry
+        def plain(self):
+            return 1
+        assert callable(plain)
+
+    def test_retry_or_fallback_accepts_regular_function(self):
+        @retry_or_fallback(lambda e: None)
+        def plain(self):
+            return 1
+        assert callable(plain)
 
 
 class AsyncMock:

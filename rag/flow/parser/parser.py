@@ -50,6 +50,7 @@ from rag.flow.parser.utils import (
     remove_toc_word,
 )
 from rag.llm.cv_model import Base as VLM
+from rag.llm.retry import is_error_result
 from rag.utils.base64_image import image2id
 
 
@@ -288,12 +289,13 @@ class ParserParam(ProcessParamBase):
 
         audio_config = self.setups.get("audio", "")
         if audio_config:
-            self.check_empty(audio_config.get("llm_id"), "Audio VLM")
+            audio_vlm = audio_config.get("vlm") or {}
+            self.check_empty(audio_vlm.get("llm_id"), "Audio VLM")
 
         video_config = self.setups.get("video", "")
         if video_config:
-            self.check_empty(video_config.get("llm_id"), "Video VLM")
-
+            video_vlm = video_config.get("vlm") or {}
+            self.check_empty(video_vlm.get("llm_id"), "Video VLM")
         email_config = self.setups.get("email", "")
         if email_config:
             email_output_format = email_config.get("output_format", "")
@@ -1062,6 +1064,9 @@ class Parser(ProcessBase):
             except Exception as e:
                 logging.warning(f"CV model describe failed: {e}")
                 txt = ""
+            if is_error_result(txt):
+                logging.warning(f"CV model describe returned error: {txt}")
+                txt = ""
 
         json_result = [
             {
@@ -1080,16 +1085,18 @@ class Parser(ProcessBase):
         self.callback(random.randint(1, 5) / 100.0, "Start to work on an audio.")
 
         conf = self._param.setups["audio"]
+        vlm = conf.get("vlm")
         self.set_output("output_format", conf["output_format"])
         _, ext = os.path.splitext(name)
         with tempfile.NamedTemporaryFile(suffix=ext) as tmpf:
             tmpf.write(blob)
             tmpf.flush()
             tmp_path = os.path.abspath(tmpf.name)
-            seq2txt_model_config = get_model_config_by_type_and_name(self._canvas.get_tenant_id(), LLMType.SPEECH2TEXT, conf["llm_id"])
+            seq2txt_model_config = get_model_config_by_type_and_name(self._canvas.get_tenant_id(), LLMType.SPEECH2TEXT, vlm["llm_id"])
             seq2txt_mdl = LLMBundle(self._canvas.get_tenant_id(), seq2txt_model_config)
             try:
-                txt = seq2txt_mdl.transcription(tmp_path)
+                transcription = seq2txt_mdl.transcription(tmp_path)
+                txt = transcription[0] if isinstance(transcription, tuple) else transcription
             except Exception as e:
                 logging.warning(f"Transcription failed: {e}")
                 txt = ""
@@ -1101,8 +1108,9 @@ class Parser(ProcessBase):
         self.callback(random.randint(1, 5) / 100.0, "Start to work on an video.")
 
         conf = self._param.setups["video"]
+        vlm = conf.get("vlm")
         self.set_output("output_format", conf["output_format"])
-        cv_model_config = get_model_config_by_type_and_name(self._canvas.get_tenant_id(), LLMType.IMAGE2TEXT, conf["llm_id"])
+        cv_model_config = get_model_config_by_type_and_name(self._canvas.get_tenant_id(), LLMType.IMAGE2TEXT, vlm["llm_id"])
         cv_mdl = LLMBundle(self._canvas.get_tenant_id(), cv_model_config)
         video_prompt = str(conf.get("prompt", "") or "")
         txt = asyncio.run(cv_mdl.async_chat(system="", history=[], gen_conf={}, video_bytes=blob, filename=name, video_prompt=video_prompt))
