@@ -9,17 +9,18 @@ RUN python3 -m venv "$VIRTUAL_ENV"
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 RUN pip install --no-cache-dir \
-    opendataloader-pdf \
+    "opendataloader-pdf[hybrid]" \
     fastapi \
     "uvicorn[standard]" \
     python-multipart
 
 WORKDIR /app
-COPY app.py .
+COPY app.py start.sh ./
+RUN chmod +x /app/start.sh
 
 EXPOSE 9385
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=180s \
   CMD curl -fsS http://localhost:9385/health || exit 1
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "9385"]
+CMD ["/app/start.sh"]

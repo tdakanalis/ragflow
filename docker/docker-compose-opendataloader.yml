@@ -6,6 +6,11 @@ services:
     container_name: ragflow-opendataloader
     environment:
       - API_KEY=${OPENDATALOADER_API_KEY:-}
+      - ENABLE_HYBRID=${ENABLE_HYBRID:-false}
+      - OPENDATALOADER_HYBRID=${OPENDATALOADER_HYBRID:-}
+      - OPENDATALOADER_HYBRID_MODE=${OPENDATALOADER_HYBRID_MODE:-}
+      - OPENDATALOADER_HYBRID_URL=${OPENDATALOADER_HYBRID_URL:-http://localhost:5002}
+      - OPENDATALOADER_HYBRID_FALLBACK=${OPENDATALOADER_HYBRID_FALLBACK:-true}
     networks:
       - ragflow
     restart: unless-stopped

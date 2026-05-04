@@ -7,6 +7,10 @@ from pathlib import Path
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 
 API_KEY = os.environ.get("API_KEY", "")
+DEFAULT_HYBRID = os.environ.get("OPENDATALOADER_HYBRID", "").strip()
+DEFAULT_HYBRID_MODE = os.environ.get("OPENDATALOADER_HYBRID_MODE", "").strip()
+DEFAULT_HYBRID_URL = os.environ.get("OPENDATALOADER_HYBRID_URL", "").strip()
+DEFAULT_HYBRID_FALLBACK = os.environ.get("OPENDATALOADER_HYBRID_FALLBACK", "").strip().lower() in ("1", "true", "yes")
 
 app = FastAPI(title="opendataloader-service")
 
@@ -48,8 +52,15 @@ async def file_parse(
             "-f", "json,markdown",
             str(in_pdf),
         ]
-        if hybrid:
-            cmd += ["--hybrid", hybrid]
+        eff_hybrid = hybrid or DEFAULT_HYBRID
+        if eff_hybrid:
+            cmd += ["--hybrid", eff_hybrid]
+            if DEFAULT_HYBRID_MODE:
+                cmd += ["--hybrid-mode", DEFAULT_HYBRID_MODE]
+            if DEFAULT_HYBRID_URL:
+                cmd += ["--hybrid-url", DEFAULT_HYBRID_URL]
+            if DEFAULT_HYBRID_FALLBACK:
+                cmd += ["--hybrid-fallback"]
         if image_output:
             cmd += ["--image-output", image_output]
         if sanitize and sanitize.lower() == "true":
