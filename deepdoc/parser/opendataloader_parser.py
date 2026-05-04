@@ -341,6 +341,7 @@ class OpenDataLoaderParser(RAGFlowPdfParser):
         hybrid: Optional[str] = None,
         image_output: Optional[str] = None,
         sanitize: Optional[bool] = None,
+        **kwargs,
     ):
         self.outlines = extract_pdf_outlines(binary if binary is not None else filepath)
 
