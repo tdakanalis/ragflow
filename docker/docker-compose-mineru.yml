@@ -1,0 +1,58 @@
+services:
+  mineru:
+    image: opendatalab/mineru-api:latest
+    container_name: ragflow-mineru
+    networks:
+      - ragflow
+    ports:
+      - "${MINERU_HOST_PORT:-8888}:8888"
+    environment:
+      - MINERU_BACKEND=${MINERU_BACKEND:-pipeline}
+    restart: unless-stopped
+    # Uncomment for NVIDIA GPU:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8888/openapi.json >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 300s
+
+  ragflow-cpu:
+    environment:
+      - MINERU_APISERVER=http://mineru:8888
+      - MINERU_BACKEND=${MINERU_BACKEND:-pipeline}
+      - MINERU_SERVER_URL=${MINERU_SERVER_URL:-}
+      - MINERU_OUTPUT_DIR=${MINERU_OUTPUT_DIR:-}
+      - MINERU_DELETE_OUTPUT=${MINERU_DELETE_OUTPUT:-1}
+    depends_on:
+      - mineru
+
+  ragflow-gpu:
+    environment:
+      - MINERU_APISERVER=http://mineru:8888
+      - MINERU_BACKEND=${MINERU_BACKEND:-pipeline}
+      - MINERU_SERVER_URL=${MINERU_SERVER_URL:-}
+      - MINERU_OUTPUT_DIR=${MINERU_OUTPUT_DIR:-}
+      - MINERU_DELETE_OUTPUT=${MINERU_DELETE_OUTPUT:-1}
+    depends_on:
+      - mineru
+
+  ragflow-executor:
+    environment:
+      - MINERU_APISERVER=http://mineru:8888
+      - MINERU_BACKEND=${MINERU_BACKEND:-pipeline}
+      - MINERU_SERVER_URL=${MINERU_SERVER_URL:-}
+      - MINERU_OUTPUT_DIR=${MINERU_OUTPUT_DIR:-}
+      - MINERU_DELETE_OUTPUT=${MINERU_DELETE_OUTPUT:-1}
+    depends_on:
+      - mineru
+
+networks:
+  ragflow:
