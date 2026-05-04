@@ -44,10 +44,9 @@ async def file_parse(
 
         cmd = [
             "opendataloader-pdf",
-            "--input", str(in_pdf),
-            "--output", str(out_dir),
-            "--save-json",
-            "--save-markdown",
+            "-o", str(out_dir),
+            "-f", "json,markdown",
+            str(in_pdf),
         ]
         if hybrid:
             cmd += ["--hybrid", hybrid]
@@ -58,9 +57,13 @@ async def file_parse(
 
         proc = subprocess.run(cmd, capture_output=True, text=True)
         if proc.returncode != 0:
+            import logging as _lg
+            _lg.error("opendataloader-pdf failed (rc=%s)\nSTDOUT: %s\nSTDERR: %s",
+                      proc.returncode, proc.stdout[-2000:], proc.stderr[-2000:])
             raise HTTPException(
                 status_code=500,
-                detail=f"opendataloader-pdf failed: {proc.stderr[:2000]}",
+                detail=f"opendataloader-pdf failed (rc={proc.returncode}): "
+                       f"{(proc.stderr or proc.stdout)[-2000:]}",
             )
 
         json_doc = None
