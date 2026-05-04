@@ -1,7 +1,10 @@
 FROM eclipse-temurin:17-jre
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends python3 python3-pip python3-venv curl \
+ && apt-get install -y --no-install-recommends \
+      python3 python3-pip python3-venv \
+      curl \
+      libxcb1 libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
  && rm -rf /var/lib/apt/lists/*
 
 ENV VIRTUAL_ENV=/opt/venv
