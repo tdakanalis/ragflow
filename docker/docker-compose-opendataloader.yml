@@ -1,0 +1,46 @@
+services:
+  opendataloader:
+    build:
+      context: ./opendataloader-service
+      dockerfile: Dockerfile
+    container_name: ragflow-opendataloader
+    environment:
+      - API_KEY=${OPENDATALOADER_API_KEY:-}
+    networks:
+      - ragflow
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9385/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  ragflow-cpu:
+    environment:
+      - OPENDATALOADER_APISERVER=http://opendataloader:9385
+      - OPENDATALOADER_API_KEY=${OPENDATALOADER_API_KEY:-}
+      - OPENDATALOADER_TIMEOUT=${OPENDATALOADER_TIMEOUT:-600}
+    depends_on:
+      opendataloader:
+        condition: service_healthy
+
+  ragflow-gpu:
+    environment:
+      - OPENDATALOADER_APISERVER=http://opendataloader:9385
+      - OPENDATALOADER_API_KEY=${OPENDATALOADER_API_KEY:-}
+      - OPENDATALOADER_TIMEOUT=${OPENDATALOADER_TIMEOUT:-600}
+    depends_on:
+      opendataloader:
+        condition: service_healthy
+
+  ragflow-executor:
+    environment:
+      - OPENDATALOADER_APISERVER=http://opendataloader:9385
+      - OPENDATALOADER_API_KEY=${OPENDATALOADER_API_KEY:-}
+      - OPENDATALOADER_TIMEOUT=${OPENDATALOADER_TIMEOUT:-600}
+    depends_on:
+      opendataloader:
+        condition: service_healthy
+
+networks:
+  ragflow:
