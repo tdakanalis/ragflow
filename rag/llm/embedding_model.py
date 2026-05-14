@@ -409,7 +409,7 @@ class JinaMultiVecEmbed(Base):
                 data["task"] = task
                 data["truncate"] = True
 
-            response = requests.post(self.base_url, headers=self.headers, json=data)
+            response = requests.post(self.base_url, headers=self.headers, json=data, timeout=30)
             try:
                 res = response.json()
                 for d in res["data"]:
@@ -754,7 +754,7 @@ class NvidiaEmbed(Base):
                 "encoding_format": "float",
                 "truncate": "END",
             }
-            response = requests.post(self.base_url, headers=self.headers, json=payload)
+            response = requests.post(self.base_url, headers=self.headers, json=payload, timeout=30)
             try:
                 res = response.json()
                 ress.extend([d["embedding"] for d in res["data"]])
@@ -897,7 +897,7 @@ class SILICONFLOWEmbed(Base):
                 "input": texts_batch,
                 "encoding_format": "float",
             }
-            response = requests.post(self.base_url, json=payload, headers=self.headers)
+            response = requests.post(self.base_url, json=payload, headers=self.headers, timeout=30)
             try:
                 res = response.json()
                 ress.extend([d["embedding"] for d in res["data"]])
@@ -915,7 +915,7 @@ class SILICONFLOWEmbed(Base):
             "input": text,
             "encoding_format": "float",
         }
-        response = requests.post(self.base_url, json=payload, headers=self.headers)
+        response = requests.post(self.base_url, json=payload, headers=self.headers, timeout=30)
         try:
             res = response.json()
             return np.array(res["data"][0]["embedding"]), total_token_count_from_response(res)
@@ -1032,7 +1032,7 @@ class HuggingFaceEmbed(Base):
 
     @retry
     def encode(self, texts: list):
-        response = requests.post(f"{self.base_url}/embed", json={"inputs": texts}, headers={"Content-Type": "application/json"})
+        response = requests.post(f"{self.base_url}/embed", json={"inputs": texts}, headers={"Content-Type": "application/json"}, timeout=30)
         if response.status_code == 200:
             embeddings = response.json()
         else:
@@ -1041,7 +1041,7 @@ class HuggingFaceEmbed(Base):
 
     @retry
     def encode_queries(self, text: str):
-        response = requests.post(f"{self.base_url}/embed", json={"inputs": text}, headers={"Content-Type": "application/json"})
+        response = requests.post(f"{self.base_url}/embed", json={"inputs": text}, headers={"Content-Type": "application/json"}, timeout=30)
         if response.status_code == 200:
             embedding = response.json()[0]
             return np.array(embedding), num_tokens_from_string(text)
@@ -1241,7 +1241,7 @@ class PerplexityEmbed(Base):
                     "input": [[chunk] for chunk in batch],
                     "encoding_format": "base64_int8",
                 }
-                response = requests.post(url, headers=self.headers, json=payload)
+                response = requests.post(url, headers=self.headers, json=payload, timeout=30)
                 try:
                     res = response.json()
                     for doc in res["data"]:
@@ -1260,7 +1260,7 @@ class PerplexityEmbed(Base):
                     "input": batch,
                     "encoding_format": "base64_int8",
                 }
-                response = requests.post(url, headers=self.headers, json=payload)
+                response = requests.post(url, headers=self.headers, json=payload, timeout=30)
                 try:
                     res = response.json()
                     for d in res["data"]:

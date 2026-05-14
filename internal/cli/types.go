@@ -81,6 +81,10 @@ const (
 	TokenDefault
 	TokenChats
 	TokenChat
+	TokenMessage
+	TokenImage
+	TokenVideo
+	TokenAudio
 	TokenStream
 	TokenFiles
 	TokenAs
@@ -98,6 +102,15 @@ const (
 	TokenASR
 	TokenTTS
 	TokenOCR
+	TokenEmbed
+	TokenText
+	TokenQuery
+	TokenFormat
+	TokenParam
+	TokenPlay
+	TokenSave
+	TokenTop
+	TokenDimension
 	TokenAsync
 	TokenSync
 	TokenBenchmark
@@ -109,7 +122,6 @@ const (
 	TokenVector
 	TokenSize
 	TokenName // For ALTER PROVIDER <name> NAME <new_name>
-	TokenPool
 	TokenBalance
 	TokenInstance
 	TokenInstances
@@ -140,6 +152,7 @@ const (
 	TokenTag
 	TokenRegion
 	TokenURL
+	TokenTasks
 	TokenLog
 	TokenLevel
 	TokenDebug
