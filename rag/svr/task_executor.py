@@ -147,6 +147,12 @@ chunk_limiter = asyncio.Semaphore(MAX_CONCURRENT_CHUNK_BUILDERS)
 embed_limiter = asyncio.Semaphore(MAX_CONCURRENT_CHUNK_BUILDERS)
 minio_limiter = asyncio.Semaphore(MAX_CONCURRENT_MINIO)
 kg_limiter = asyncio.Semaphore(2)
+
+
+def _embedding_batch_size(mdl) -> int:
+    """Outer batch size: EMBEDDING_BATCH_SIZE env var as floor, provider cap as ceiling above it."""
+    return max(settings.EMBEDDING_BATCH_SIZE,
+               getattr(mdl, "max_batch_size", settings.EMBEDDING_BATCH_SIZE))
 WORKER_HEARTBEAT_TIMEOUT = int(os.environ.get('WORKER_HEARTBEAT_TIMEOUT', '120'))
 stop_event = threading.Event()
 
@@ -657,9 +663,10 @@ async def embedding(docs, mdl, parser_config=None, callback=None):
         return mdl.encode([truncate(c, mdl.max_length - 10) for c in txts])
 
     cnts_batches = []
-    for i in range(0, len(cnts), settings.EMBEDDING_BATCH_SIZE):
+    batch_size = _embedding_batch_size(mdl)
+    for i in range(0, len(cnts), batch_size):
         async with embed_limiter:
-            vts, c = await thread_pool_exec(batch_encode, cnts[i: i + settings.EMBEDDING_BATCH_SIZE])
+            vts, c = await thread_pool_exec(batch_encode, cnts[i: i + batch_size])
         cnts_batches.append(vts)
         tk_count += c
         callback(prog=0.7 + 0.2 * (i + 1) / len(cnts), msg="")
@@ -748,16 +755,17 @@ async def run_dataflow(task: dict):
 
             vects_batches = []
             texts = [o.get("questions", o.get("summary", o["text"])) for o in chunks]
-            delta = 0.20 / (len(texts) // settings.EMBEDDING_BATCH_SIZE + 1)
+            batch_size = _embedding_batch_size(embedding_model)
+            delta = 0.20 / (len(texts) // batch_size + 1)
             prog = 0.8
-            for i in range(0, len(texts), settings.EMBEDDING_BATCH_SIZE):
+            for i in range(0, len(texts), batch_size):
                 async with embed_limiter:
-                    vts, c = await thread_pool_exec(batch_encode, texts[i: i + settings.EMBEDDING_BATCH_SIZE])
+                    vts, c = await thread_pool_exec(batch_encode, texts[i: i + batch_size])
                 vects_batches.append(vts)
                 embedding_token_consumption += c
                 prog += delta
-                if i % (len(texts) // settings.EMBEDDING_BATCH_SIZE / 100 + 1) == 1:
-                    set_progress(task_id, prog=prog, msg=f"{i + 1} / {len(texts) // settings.EMBEDDING_BATCH_SIZE}")
+                if i % (len(texts) // batch_size / 100 + 1) == 1:
+                    set_progress(task_id, prog=prog, msg=f"{i + 1} / {len(texts) // batch_size}")
             vects = np.vstack(vects_batches) if vects_batches else np.array([])
 
             assert len(vects) == len(chunks)

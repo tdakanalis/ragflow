@@ -35,6 +35,10 @@ import base64
 
 
 class Base(ABC):
+    # Largest input list size the provider accepts in a single network request.
+    # Subclasses override for providers that support larger batches.
+    max_batch_size: int = 16
+
     def __init__(self, key, model_name, **kwargs):
         """
         Constructor for abstract base class.
@@ -541,6 +545,8 @@ class BedrockEmbed(Base):
 
 class GeminiEmbed(Base):
     _FACTORY_NAME = "Gemini"
+    # Gemini API batchEmbedContents endpoint accepts up to 100 inputs per call.
+    max_batch_size: int = 100
 
     def __init__(self, key, model_name="gemini-embedding-001", **kwargs):
         from google import genai
@@ -597,7 +603,7 @@ class GeminiEmbed(Base):
         texts = [truncate(t, 2048) for t in texts]
         token_count = sum(num_tokens_from_string(text) for text in texts)
         config = self._build_embedding_config()
-        batch_size = 16
+        batch_size = self.max_batch_size
         ress = []
         for i in range(0, len(texts), batch_size):
             result = None
@@ -632,6 +638,9 @@ class GeminiEmbed(Base):
 
 class GoogleEmbed(Base):
     _FACTORY_NAME = "Google Cloud"
+    # Vertex AI :predict for text-embedding-* models accepts up to 250 inputs per call.
+    # Note: gemini-embedding-* models on Vertex are limited to 1 input/request by the SDK.
+    max_batch_size: int = 250
 
     def __init__(self, key, model_name, **kwargs):
         from google import genai
@@ -683,7 +692,7 @@ class GoogleEmbed(Base):
         texts = [truncate(t, 2048) for t in texts]
         token_count = sum(num_tokens_from_string(t) for t in texts)
         config = self._build_embedding_config("RETRIEVAL_DOCUMENT")
-        batch_size = 250
+        batch_size = self.max_batch_size
         ress = []
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]

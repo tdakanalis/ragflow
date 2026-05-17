@@ -27,8 +27,7 @@ from rag.flow.base import ProcessBase, ProcessParamBase
 from rag.flow.parser.pdf_chunk_metadata import finalize_pdf_chunk
 from rag.flow.tokenizer.schema import TokenizerFromUpstream
 from rag.nlp import rag_tokenizer
-from common import settings
-from rag.svr.task_executor import embed_limiter
+from rag.svr.task_executor import embed_limiter, _embedding_batch_size
 from common.token_utils import truncate
 
 from common.misc_utils import thread_pool_exec
@@ -98,13 +97,14 @@ class Tokenizer(ProcessBase):
             return embedding_model.encode([truncate(c, embedding_model.max_length - 10) for c in txts])
 
         cnts_batches = []
-        for i in range(0, len(texts), settings.EMBEDDING_BATCH_SIZE):
+        batch_size = _embedding_batch_size(embedding_model)
+        for i in range(0, len(texts), batch_size):
             async with embed_limiter:
-                vts, c = await thread_pool_exec(batch_encode,texts[i : i + settings.EMBEDDING_BATCH_SIZE],)
+                vts, c = await thread_pool_exec(batch_encode, texts[i : i + batch_size])
             cnts_batches.append(vts)
             token_count += c
             if i % 33 == 32:
-                self.callback(i * 1.0 / len(texts) / parts / settings.EMBEDDING_BATCH_SIZE + 0.5 * (parts - 1))
+                self.callback(i * 1.0 / len(texts) / parts / batch_size + 0.5 * (parts - 1))
         cnts_ = np.vstack(cnts_batches) if cnts_batches else np.array([])
 
         cnts = cnts_
