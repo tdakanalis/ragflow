@@ -687,15 +687,30 @@ class GoogleEmbed(Base):
             result.append(values)
         return result
 
+    # Vertex AI text-embedding-* models enforce a per-request total token cap
+    # (~20,000). Build batches that respect both the count cap and the token cap.
+    # The 18,000 budget leaves a safety margin since tiktoken and Vertex's tokenizer
+    # disagree on token counts.
+    _MAX_TOKENS_PER_REQUEST = 18000
+
     @retry
     def encode(self, texts: list):
         texts = [truncate(t, 2048) for t in texts]
-        token_count = sum(num_tokens_from_string(t) for t in texts)
+        per_text_tokens = [num_tokens_from_string(t) for t in texts]
+        token_count = sum(per_text_tokens)
         config = self._build_embedding_config("RETRIEVAL_DOCUMENT")
-        batch_size = self.max_batch_size
         ress = []
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i : i + batch_size]
+        i = 0
+        while i < len(texts):
+            batch_end = i
+            batch_tokens = 0
+            while batch_end < len(texts) and batch_end - i < self.max_batch_size:
+                next_tk = per_text_tokens[batch_end]
+                if batch_end > i and batch_tokens + next_tk > self._MAX_TOKENS_PER_REQUEST:
+                    break
+                batch_tokens += next_tk
+                batch_end += 1
+            batch = texts[i:batch_end]
             result = None
             try:
                 kwargs = {"model": self.model_name, "contents": batch}
@@ -712,6 +727,7 @@ class GoogleEmbed(Base):
             except Exception as _e:
                 log_exception(_e, result)
                 raise Exception(f"Vertex AI embed_content failed: {_e}") from _e
+            i = batch_end
         return np.array(ress), token_count
 
     @retry
